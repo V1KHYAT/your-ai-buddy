@@ -3,6 +3,8 @@ import ChatMessage from "@/components/ChatMessage";
 import ChatInput from "@/components/ChatInput";
 import TypingIndicator from "@/components/TypingIndicator";
 import { MessageSquare } from "lucide-react";
+import { streamChat } from "@/utils/streamChat";
+import { useToast } from "@/hooks/use-toast";
 
 interface Message {
   id: string;
@@ -10,15 +12,6 @@ interface Message {
   isUser: boolean;
   timestamp: Date;
 }
-
-const BOT_RESPONSES = [
-  "That's interesting! Tell me more.",
-  "I understand. How can I help you with that?",
-  "Great question! Let me think about that for a moment.",
-  "I see what you mean. That's a fascinating perspective!",
-  "Thanks for sharing! Is there anything specific you'd like to know?",
-  "I'm here to help! What else would you like to discuss?",
-];
 
 const Index = () => {
   const [messages, setMessages] = useState<Message[]>([
@@ -31,6 +24,7 @@ const Index = () => {
   ]);
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -40,7 +34,7 @@ const Index = () => {
     scrollToBottom();
   }, [messages, isTyping]);
 
-  const handleSendMessage = (text: string) => {
+  const handleSendMessage = async (text: string) => {
     const userMessage: Message = {
       id: Date.now().toString(),
       text,
@@ -51,17 +45,60 @@ const Index = () => {
     setMessages((prev) => [...prev, userMessage]);
     setIsTyping(true);
 
-    // Simulate bot response
-    setTimeout(() => {
-      const botResponse: Message = {
-        id: (Date.now() + 1).toString(),
-        text: BOT_RESPONSES[Math.floor(Math.random() * BOT_RESPONSES.length)],
-        isUser: false,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, botResponse]);
+    let assistantText = "";
+    const assistantId = (Date.now() + 1).toString();
+
+    try {
+      await streamChat({
+        messages: [
+          ...messages.map((m) => ({
+            role: m.isUser ? ("user" as const) : ("assistant" as const),
+            content: m.text,
+          })),
+          { role: "user" as const, content: text },
+        ],
+        onDelta: (chunk) => {
+          assistantText += chunk;
+          setMessages((prev) => {
+            const lastMsg = prev[prev.length - 1];
+            if (lastMsg?.id === assistantId) {
+              return prev.map((m) =>
+                m.id === assistantId ? { ...m, text: assistantText } : m
+              );
+            }
+            return [
+              ...prev,
+              {
+                id: assistantId,
+                text: assistantText,
+                isUser: false,
+                timestamp: new Date(),
+              },
+            ];
+          });
+        },
+        onDone: () => {
+          setIsTyping(false);
+        },
+        onError: (error) => {
+          console.error("Chat error:", error);
+          setIsTyping(false);
+          toast({
+            title: "Error",
+            description: error.message || "Failed to get response. Please try again.",
+            variant: "destructive",
+          });
+        },
+      });
+    } catch (error) {
+      console.error("Failed to send message:", error);
       setIsTyping(false);
-    }, 1000 + Math.random() * 1000);
+      toast({
+        title: "Error",
+        description: "Failed to send message. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -75,7 +112,7 @@ const Index = () => {
             </div>
             <div>
               <h1 className="text-xl font-semibold text-foreground">AI Chat Assistant</h1>
-              <p className="text-xs text-muted-foreground">Always here to help</p>
+              <p className="text-xs text-muted-foreground">Powered by Gemini AI</p>
             </div>
           </div>
         </div>
